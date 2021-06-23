@@ -16,7 +16,9 @@ package mock
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -29,6 +31,8 @@ import (
 	"sync"
 	"time"
 
+	"cloud.google.com/cloudsqlconn/internal/cloudsql"
+	"google.golang.org/api/option"
 	sqladmin "google.golang.org/api/sqladmin/v1beta4"
 )
 
@@ -169,12 +173,9 @@ func InstanceGetSuccess(i FakeCSQLInstance, ct int) *Request {
 	return InstanceGetSuccessWithOpts(i, ct, []IPMapping{{IPAddr: "127.0.0.1", Type: "PRIMARY"}})
 }
 
-// CreateEphemeralSuccess returns a Request that responds to the
-// `sslCerts.createEphemeral` SQL Admin endpoint. It responds with a "StatusOK" and a
-// SslCerts object.
-//
-// https://cloud.google.com/sql/docs/mysql/admin-api/rest/v1beta4/sslCerts/createEphemeral
-func CreateEphemeralSuccess(i FakeCSQLInstance, ct int) *Request {
+// CreateEphemeralSuccessWithOpts is like CreateEphemeralSuccess but allows a
+// client to configure the certificate expiration time.
+func CreateEphemeralSuccessWithOpts(i FakeCSQLInstance, ct int, certExpiry time.Time) *Request {
 	r := &Request{
 		reqMethod: http.MethodPost,
 		reqPath:   fmt.Sprintf("/sql/v1beta4/projects/%s/instances/%s/createEphemeral", i.project, i.name),
@@ -214,7 +215,7 @@ func CreateEphemeralSuccess(i FakeCSQLInstance, ct int) *Request {
 					CommonName:   "Google Cloud SQL Client",
 				},
 				NotBefore:             time.Now(),
-				NotAfter:              time.Now().Add(time.Hour), // 1 hour
+				NotAfter:              certExpiry,
 				ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
 				KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
 				BasicConstraintsValid: true,
@@ -249,4 +250,38 @@ func CreateEphemeralSuccess(i FakeCSQLInstance, ct int) *Request {
 		},
 	}
 	return r
+}
+
+// CreateEphemeralSuccess returns a Request that responds to the
+// `sslCerts.createEphemeral` SQL Admin endpoint. It responds with a "StatusOK" and a
+// SslCerts object.
+//
+// https://cloud.google.com/sql/docs/mysql/admin-api/rest/v1beta4/sslCerts/createEphemeral
+func CreateEphemeralSuccess(i FakeCSQLInstance, ct int) *Request {
+	return CreateEphemeralSuccessWithOpts(i, ct, time.Now().Add(time.Hour))
+}
+
+// TestClient is a convenience wrapper that configures a mock HTTP client and
+// sqladmin.Service based on a connection name.
+func TestClient(cn cloudsql.ConnName, addrs []IPMapping, certExpiry time.Time) (*sqladmin.Service, func() error, error) {
+	inst := NewFakeCSQLInstance(cn.Project, cn.Region, cn.Name)
+	mc, url, cleanup := HTTPClient(
+		InstanceGetSuccessWithOpts(inst, 1, addrs),
+		CreateEphemeralSuccessWithOpts(inst, 1, certExpiry),
+	)
+	client, err := sqladmin.NewService(
+		context.Background(),
+		option.WithHTTPClient(mc),
+		option.WithEndpoint(url),
+	)
+	return client, cleanup, err
+}
+
+// RSAKey generates an RSA key used for test.
+func RSAKey() *rsa.PrivateKey {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		panic(err) // unexpected, so just panic if it happens
+	}
+	return key
 }

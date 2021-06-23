@@ -16,16 +16,12 @@ package cloudsql_test
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
 	"errors"
 	"testing"
 	"time"
 
 	"cloud.google.com/cloudsqlconn/internal/cloudsql"
 	"cloud.google.com/cloudsqlconn/internal/mock"
-	"google.golang.org/api/option"
-	sqladmin "google.golang.org/api/sqladmin/v1beta4"
 )
 
 func TestParseConnName(t *testing.T) {
@@ -58,41 +54,20 @@ func TestParseConnName(t *testing.T) {
 	}
 }
 
-func testClient(cn cloudsql.ConnName, addrs []mock.IPMapping) (*sqladmin.Service, func() error, error) {
-	inst := mock.NewFakeCSQLInstance(cn.Project, cn.Region, cn.Name)
-	mc, url, cleanup := mock.HTTPClient(
-		mock.InstanceGetSuccessWithOpts(inst, 1, addrs),
-		mock.CreateEphemeralSuccess(inst, 1),
-	)
-	client, err := sqladmin.NewService(
-		context.Background(),
-		option.WithHTTPClient(mc),
-		option.WithEndpoint(url),
-	)
-	return client, cleanup, err
-}
-
-func rsaKey() *rsa.PrivateKey {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		panic(err) // unexpected, so just panic if it happens
-	}
-	return key
-}
-
 func TestConnectInfo(t *testing.T) {
 	wantAddr := "0.0.0.0"
 	cn, _ := cloudsql.NewConnName("my-project:my-region:my-instance")
-	client, cleanup, err := testClient(
+	client, cleanup, err := mock.TestClient(
 		cn,
 		[]mock.IPMapping{{IPAddr: wantAddr, Type: "PRIMARY"}},
+		time.Now().Add(time.Hour),
 	)
 	if err != nil {
 		t.Fatalf("failed to create test SQL admin service: %s", err)
 	}
 	defer cleanup()
 
-	i := cloudsql.NewInstance(cn, client, rsaKey(), 30*time.Second)
+	i := cloudsql.NewInstance(cn, client, mock.RSAKey(), 30*time.Second)
 
 	gotAddr, gotTLSCfg, err := i.ConnectInfo(context.Background(), cloudsql.PublicIP)
 	if err != nil {
@@ -117,9 +92,10 @@ func TestConnectInfo(t *testing.T) {
 
 func TestConnectInfoErrors(t *testing.T) {
 	cn, _ := cloudsql.NewConnName("my-project:my-region:my-instance")
-	client, cleanup, err := testClient(
+	client, cleanup, err := mock.TestClient(
 		cn,
 		[]mock.IPMapping{{IPAddr: "127.0.0.1", Type: cloudsql.PublicIP}},
+		time.Now().Add(time.Hour),
 	)
 	if err != nil {
 		t.Fatalf("failed to create test SQL admin service: %s", err)
@@ -127,7 +103,7 @@ func TestConnectInfoErrors(t *testing.T) {
 	defer cleanup()
 
 	// Use a timeout that should fail instantly
-	i := cloudsql.NewInstance(cn, client, rsaKey(), 0)
+	i := cloudsql.NewInstance(cn, client, mock.RSAKey(), 0)
 	if err != nil {
 		t.Fatalf("failed to initialize Instance: %v", err)
 	}
