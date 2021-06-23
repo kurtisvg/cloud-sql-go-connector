@@ -58,33 +58,33 @@ func TestParseConnName(t *testing.T) {
 	}
 }
 
-func TestConnectInfo(t *testing.T) {
-	// define some test instance settings
-	cn, _ := cloudsql.NewConnName("my-project:my-region:my-instance")
-	inst := mock.NewFakeCSQLInstance("my-project", "my-region", "my-instance")
-
-	// mock expected requests
+func testClient(project, region, instance string) (*sqladmin.Service, func() error, error) {
+	inst := mock.NewFakeCSQLInstance(project, region, instance)
 	mc, url, cleanup := mock.HTTPClient(
 		mock.InstanceGetSuccess(inst, 1),
 		mock.CreateEphemeralSuccess(inst, 1),
 	)
-	defer func() {
-		if err := cleanup(); err != nil {
-			t.Fatalf("%v", err)
-		}
-	}()
+	client, err := sqladmin.NewService(
+		context.Background(),
+		option.WithHTTPClient(mc),
+		option.WithEndpoint(url),
+	)
+	return client, cleanup, err
+}
 
-	client, err := sqladmin.NewService(context.Background(), option.WithHTTPClient(mc), option.WithEndpoint(url))
+func TestConnectInfo(t *testing.T) {
+	client, cleanup, err := testClient("my-project", "my-region", "my-instance")
 	if err != nil {
-		t.Fatalf("client init failed: %s", err)
+		t.Fatalf("failed to create test SQL admin service: %s", err)
 	}
+	defer cleanup()
 
-	// Step 0: Generate Keys
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("failed to generate keys: %v", err)
 	}
 
+	cn, _ := cloudsql.NewConnName("my-project:my-region:my-instance")
 	im := cloudsql.NewInstance(cn, client, key, 30*time.Second)
 
 	_, _, err = im.ConnectInfo(context.Background())
@@ -94,33 +94,26 @@ func TestConnectInfo(t *testing.T) {
 }
 
 func TestRefreshTimeout(t *testing.T) {
-	ctx := context.Background()
-
-	// mock expected requests
-	mc, url, cleanup := mock.HTTPClient()
-	defer func() {
-		if err := cleanup(); err != nil {
-			t.Fatalf("%v", err)
-		}
-	}()
-
-	client, err := sqladmin.NewService(ctx, option.WithHTTPClient(mc), option.WithEndpoint(url))
+	client, cleanup, err := testClient("my-project", "my-region", "my-instance")
 	if err != nil {
-		t.Fatalf("client init failed: %s", err)
+		t.Fatalf("failed to create test SQL admin service: %s", err)
 	}
+	defer cleanup()
+
 	// Step 0: Generate Keys
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("failed to generate keys: %v", err)
 	}
 
+	cn, _ := cloudsql.NewConnName("my-project:my-region:my-instance")
 	// Use a timeout that should fail instantly
-	im := cloudsql.NewInstance(cloudsql.ConnName{"my-project", "my-region", "my-instance"}, client, key, 0)
+	im := cloudsql.NewInstance(cn, client, key, 0)
 	if err != nil {
 		t.Fatalf("failed to initialize Instance: %v", err)
 	}
 
-	_, _, err = im.ConnectInfo(ctx)
+	_, _, err = im.ConnectInfo(context.Background())
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("failed to retrieve connect info: %v", err)
 	}
