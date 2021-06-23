@@ -85,10 +85,7 @@ func TestConnectInfo(t *testing.T) {
 		t.Fatalf("failed to generate keys: %v", err)
 	}
 
-	im, err := cloudsql.NewInstance(cn, client, key, 30*time.Second)
-	if err != nil {
-		t.Fatalf("failed to initialize Instance: %v", err)
-	}
+	im := cloudsql.NewInstance(cn, client, key, 30*time.Second)
 
 	_, _, err = im.ConnectInfo(context.Background())
 	if err != nil {
@@ -118,7 +115,7 @@ func TestRefreshTimeout(t *testing.T) {
 	}
 
 	// Use a timeout that should fail instantly
-	im, err := cloudsql.NewInstance(cloudsql.ConnName{"my-project", "my-region", "my-instance"}, client, key, 0)
+	im := cloudsql.NewInstance(cloudsql.ConnName{"my-project", "my-region", "my-instance"}, client, key, 0)
 	if err != nil {
 		t.Fatalf("failed to initialize Instance: %v", err)
 	}

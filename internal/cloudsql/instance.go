@@ -135,7 +135,7 @@ type Instance struct {
 }
 
 // NewInstance initializes a new Instance given an instance connection name
-func NewInstance(cn ConnName, client *sqladmin.Service, key *rsa.PrivateKey, refreshTimeout time.Duration) (*Instance, error) {
+func NewInstance(cn ConnName, client *sqladmin.Service, key *rsa.PrivateKey, refreshTimeout time.Duration) *Instance {
 	i := &Instance{
 		ConnName: cn,
 		key:      key,
@@ -151,7 +151,7 @@ func NewInstance(cn ConnName, client *sqladmin.Service, key *rsa.PrivateKey, ref
 	i.cur = i.scheduleRefresh(0)
 	i.next = i.cur
 	i.resultGuard.Unlock()
-	return i, nil
+	return i
 }
 
 // ConnectInfo returns a map of IP types and a TLS config that can be used to connect to a Cloud SQL instance.
