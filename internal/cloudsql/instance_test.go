@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cloudsql
+package cloudsql_test
 
 import (
 	"context"
@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"cloud.google.com/cloudsqlconn/internal/cloudsql"
 	"cloud.google.com/cloudsqlconn/internal/mock"
 	"google.golang.org/api/option"
 	sqladmin "google.golang.org/api/sqladmin/v1beta4"
@@ -30,42 +31,37 @@ import (
 func TestParseConnName(t *testing.T) {
 	tests := []struct {
 		name string
-		want connName
+		want cloudsql.ConnName
 	}{
 		{
 			"project:region:instance",
-			connName{"project", "region", "instance"},
+			cloudsql.ConnName{"project", "region", "instance"},
 		},
 		{
 			"google.com:project:region:instance",
-			connName{"google.com:project", "region", "instance"},
+			cloudsql.ConnName{"google.com:project", "region", "instance"},
 		},
 		{
 			"project:instance", // missing region
-			connName{},
+			cloudsql.ConnName{},
 		},
 	}
 
 	for _, tc := range tests {
-		c, err := parseConnName(tc.name)
-		if err != nil && tc.want != (connName{}) {
+		c, err := cloudsql.NewConnName(tc.name)
+		if err != nil && tc.want != (cloudsql.ConnName{}) {
 			t.Errorf("unexpected error: %e", err)
 		}
 		if c != tc.want {
-			t.Errorf("ParseConnName(%s) failed: want %v, got %v", tc.name, tc.want, err)
+			t.Errorf("NewConnName(%s) failed: want %v, got %v", tc.name, tc.want, err)
 		}
 	}
 }
 
 func TestConnectInfo(t *testing.T) {
-	ctx := context.Background()
-
 	// define some test instance settings
-	cn, err := parseConnName("my-proj:my-region:my-inst")
-	if err != nil {
-		t.Fatalf("%s", err)
-	}
-	inst := mock.NewFakeCSQLInstance(cn.project, cn.region, cn.name)
+	cn, _ := cloudsql.NewConnName("my-project:my-region:my-instance")
+	inst := mock.NewFakeCSQLInstance("my-project", "my-region", "my-instance")
 
 	// mock expected requests
 	mc, url, cleanup := mock.HTTPClient(
@@ -78,7 +74,7 @@ func TestConnectInfo(t *testing.T) {
 		}
 	}()
 
-	client, err := sqladmin.NewService(ctx, option.WithHTTPClient(mc), option.WithEndpoint(url))
+	client, err := sqladmin.NewService(context.Background(), option.WithHTTPClient(mc), option.WithEndpoint(url))
 	if err != nil {
 		t.Fatalf("client init failed: %s", err)
 	}
@@ -89,12 +85,12 @@ func TestConnectInfo(t *testing.T) {
 		t.Fatalf("failed to generate keys: %v", err)
 	}
 
-	im, err := NewInstance(cn.String(), client, key, 30*time.Second)
+	im, err := cloudsql.NewInstance(cn, client, key, 30*time.Second)
 	if err != nil {
 		t.Fatalf("failed to initialize Instance: %v", err)
 	}
 
-	_, _, err = im.ConnectInfo(ctx)
+	_, _, err = im.ConnectInfo(context.Background())
 	if err != nil {
 		t.Fatalf("failed to retrieve connect info: %v", err)
 	}
@@ -122,7 +118,7 @@ func TestRefreshTimeout(t *testing.T) {
 	}
 
 	// Use a timeout that should fail instantly
-	im, err := NewInstance("my-proj:my-region:my-inst", client, key, 0)
+	im, err := cloudsql.NewInstance(cloudsql.ConnName{"my-project", "my-region", "my-instance"}, client, key, 0)
 	if err != nil {
 		t.Fatalf("failed to initialize Instance: %v", err)
 	}

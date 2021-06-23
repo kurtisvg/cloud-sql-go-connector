@@ -39,30 +39,34 @@ var (
 	connNameRegex = regexp.MustCompile("([^:]+(:[^:]+)?):([^:]+):([^:]+)")
 )
 
-// connName represents the "instance connection name", in the format "project:region:name". Use the
-// "parseConnName" method to initialize this struct.
-type connName struct {
-	project string
-	region  string
-	name    string
+// ConnName represents the "instance connection name", in the format
+// "project:region:name". Use the Use NewConnName to initialize this struct.
+type ConnName struct {
+	// Project is the project name that holds the database instance.
+	Project string
+	// Region is the GCP region where the database instance is deployed.
+	Region string
+	// Name is the database's instance name.
+	Name string
 }
 
-func (c *connName) String() string {
-	return fmt.Sprintf("%s:%s:%s", c.project, c.region, c.name)
+func (c *ConnName) String() string {
+	return fmt.Sprintf("%s:%s:%s", c.Project, c.Region, c.Name)
 }
 
-// parseConnName initializes a new connName struct.
-func parseConnName(cn string) (connName, error) {
+// NewConnName parses an instance connection name (project:region:name) into a
+// ConnName.
+func NewConnName(cn string) (ConnName, error) {
 	b := []byte(cn)
 	m := connNameRegex.FindSubmatch(b)
 	if m == nil {
-		return connName{}, fmt.Errorf("invalid instance connection name - expected PROJECT:REGION:ID")
+		return ConnName{}, fmt.Errorf("invalid instance connection name - expected PROJECT:REGION:ID")
 	}
 
-	c := connName{
-		project: string(m[1]),
-		region:  string(m[3]),
-		name:    string(m[4]),
+	c := ConnName{
+		Project: string(m[1]),
+		Region:  string(m[3]),
+		Name:    string(m[4]),
 	}
 	return c, nil
 }
@@ -115,7 +119,7 @@ func (r *refreshResult) IsValid() bool {
 // the Cloud SQL Admin API. It automatically refreshes the required information approximately 5 minutes
 // before the previous certificate expires (every 55 minutes).
 type Instance struct {
-	connName
+	ConnName
 	key *rsa.PrivateKey
 	r   refresher
 
@@ -131,13 +135,9 @@ type Instance struct {
 }
 
 // NewInstance initializes a new Instance given an instance connection name
-func NewInstance(instance string, client *sqladmin.Service, key *rsa.PrivateKey, refreshTimeout time.Duration) (*Instance, error) {
-	cn, err := parseConnName(instance)
-	if err != nil {
-		return nil, err
-	}
+func NewInstance(cn ConnName, client *sqladmin.Service, key *rsa.PrivateKey, refreshTimeout time.Duration) (*Instance, error) {
 	i := &Instance{
-		connName: cn,
+		ConnName: cn,
 		key:      key,
 		r: refresher{
 			timeout:       refreshTimeout,
@@ -185,7 +185,7 @@ func (i *Instance) scheduleRefresh(d time.Duration) *refreshResult {
 	res.ready = make(chan struct{})
 	res.timer = time.AfterFunc(d, func() {
 		ctx := context.Background() // TODO: store this in Instance
-		res.md, res.tlsCfg, res.expiry, res.err = i.r.performRefresh(ctx, i.connName, i.key)
+		res.md, res.tlsCfg, res.expiry, res.err = i.r.performRefresh(ctx, i.ConnName, i.key)
 		close(res.ready)
 
 		// Once the refresh is complete, update "current" with working result and schedule a new refresh

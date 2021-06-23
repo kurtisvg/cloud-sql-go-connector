@@ -29,11 +29,11 @@ func TestFetchMetadata(t *testing.T) {
 	ctx := context.Background()
 
 	// define some test instance settings
-	cn, err := parseConnName("my-proj:my-region:my-inst")
+	cn, err := NewConnName("my-proj:my-region:my-inst")
 	if err != nil {
 		t.Fatalf("%s", err)
 	}
-	inst := mock.NewFakeCSQLInstance(cn.project, cn.region, cn.name)
+	inst := mock.NewFakeCSQLInstance(cn.Project, cn.Region, cn.Name)
 
 	// mock expected requests
 	mc, url, cleanup := mock.HTTPClient(
@@ -59,11 +59,11 @@ func TestFetchEphemeralCert(t *testing.T) {
 	ctx := context.Background()
 
 	// define some test instance settings
-	cn, err := parseConnName("my-proj:my-region:my-inst")
+	cn, err := NewConnName("my-proj:my-region:my-inst")
 	if err != nil {
 		t.Fatalf("%s", err)
 	}
-	inst := mock.NewFakeCSQLInstance(cn.project, cn.region, cn.name)
+	inst := mock.NewFakeCSQLInstance(cn.Project, cn.Region, cn.Name)
 
 	// mock expected requests
 	mc, url, cleanup := mock.HTTPClient(

@@ -42,15 +42,15 @@ type metadata struct {
 
 // fetchMetadata uses the Cloud SQL Admin APIs get method to retreive the information about a Cloud SQL instance
 // that is used to create secure connections.
-func fetchMetadata(ctx context.Context, client *sqladmin.Service, inst connName) (metadata, error) {
-	db, err := client.Instances.Get(inst.project, inst.name).Context(ctx).Do()
+func fetchMetadata(ctx context.Context, client *sqladmin.Service, inst ConnName) (metadata, error) {
+	db, err := client.Instances.Get(inst.Project, inst.Name).Context(ctx).Do()
 	if err != nil {
 		return metadata{}, fmt.Errorf("failed to get instance (%s): %w", inst, err)
 	}
 
 	// validate the instance is supported for authenticated connections
-	if db.Region != inst.region {
-		return metadata{}, fmt.Errorf("provided region was mismatched - got %s, want %s", inst.region, db.Region)
+	if db.Region != inst.Region {
+		return metadata{}, fmt.Errorf("provided region was mismatched - got %s, want %s", inst.Region, db.Region)
 	}
 	if db.BackendType != "SECOND_GEN" {
 		return metadata{}, fmt.Errorf("unsupported instance - only Second Generation instances are supported")
@@ -92,7 +92,7 @@ func fetchMetadata(ctx context.Context, client *sqladmin.Service, inst connName)
 // fetchEphemeralCert uses the Cloud SQL Admin API's createEphemeral method to create a signed TLS
 // certificate that authorized to connect via the Cloud SQL instance's serverside proxy. The cert
 // if valid for approximately one hour.
-func fetchEphemeralCert(ctx context.Context, client *sqladmin.Service, inst connName, key *rsa.PrivateKey) (tls.Certificate, error) {
+func fetchEphemeralCert(ctx context.Context, client *sqladmin.Service, inst ConnName, key *rsa.PrivateKey) (tls.Certificate, error) {
 	clientPubKey, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
 	if err != nil {
 		return tls.Certificate{}, err
@@ -101,7 +101,7 @@ func fetchEphemeralCert(ctx context.Context, client *sqladmin.Service, inst conn
 	req := sqladmin.SslCertsCreateEphemeralRequest{
 		PublicKey: string(pem.EncodeToMemory(&pem.Block{Bytes: clientPubKey, Type: "RSA PUBLIC KEY"})),
 	}
-	resp, err := client.SslCerts.CreateEphemeral(inst.project, inst.name, &req).Context(ctx).Do()
+	resp, err := client.SslCerts.CreateEphemeral(inst.Project, inst.Name, &req).Context(ctx).Do()
 	if err != nil {
 		return tls.Certificate{}, fmt.Errorf("create ephemeral failed: %w", err)
 	}
@@ -125,7 +125,7 @@ func fetchEphemeralCert(ctx context.Context, client *sqladmin.Service, inst conn
 }
 
 // createTLSConfig returns a *tls.Config for connecting securely to the Cloud SQL instance.
-func createTLSConfig(inst connName, m metadata, cert tls.Certificate) *tls.Config {
+func createTLSConfig(inst ConnName, m metadata, cert tls.Certificate) *tls.Config {
 	certs := x509.NewCertPool()
 	certs.AddCert(m.serverCaCert)
 
@@ -149,7 +149,7 @@ func createTLSConfig(inst connName, m metadata, cert tls.Certificate) *tls.Confi
 // genVerifyPeerCertificateFunc creates a VerifyPeerCertificate func that verifies that the peer
 // certificate is in the cert pool. We need to define our own because of our sketchy non-standard
 // CNs.
-func genVerifyPeerCertificateFunc(cn connName, pool *x509.CertPool) func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+func genVerifyPeerCertificateFunc(cn ConnName, pool *x509.CertPool) func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
 	return func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
 		if len(rawCerts) == 0 {
 			return fmt.Errorf("no certificate to verify")
@@ -165,7 +165,7 @@ func genVerifyPeerCertificateFunc(cn connName, pool *x509.CertPool) func(rawCert
 			return err
 		}
 
-		certInstanceName := fmt.Sprintf("%s:%s", cn.project, cn.name)
+		certInstanceName := fmt.Sprintf("%s:%s", cn.Project, cn.Name)
 		if cert.Subject.CommonName != certInstanceName {
 			return fmt.Errorf("certificate had CN %q, expected %q", cert.Subject.CommonName, certInstanceName)
 		}
@@ -182,7 +182,7 @@ type refresher struct {
 }
 
 // performRefresh immediately performs a full refresh operation using the Cloud SQL Admin API.
-func (r refresher) performRefresh(ctx context.Context, cn connName, k *rsa.PrivateKey) (metadata, *tls.Config, time.Time, error) {
+func (r refresher) performRefresh(ctx context.Context, cn ConnName, k *rsa.PrivateKey) (metadata, *tls.Config, time.Time, error) {
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 	if ctx.Err() == context.Canceled {
