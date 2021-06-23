@@ -133,13 +133,9 @@ func (d *Dialer) Dial(ctx context.Context, instance string, opts ...DialOption) 
 	if err != nil {
 		return nil, err
 	}
-	ipAddrs, tlsCfg, err := i.ConnectInfo(ctx)
+	addr, tlsCfg, err := i.ConnectInfo(ctx, cfg.ipType)
 	if err != nil {
 		return nil, err
-	}
-	addr, ok := ipAddrs[cfg.ipType]
-	if !ok {
-		return nil, fmt.Errorf("instance '%s' does not have IP of type '%s'", instance, cfg.ipType)
 	}
 	addr = net.JoinHostPort(addr, serverProxyPort)
 

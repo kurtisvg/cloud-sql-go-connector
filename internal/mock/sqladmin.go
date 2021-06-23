@@ -98,11 +98,18 @@ func (r *Request) matches(hR *http.Request) bool {
 	return true
 }
 
-// InstanceGetSuccess returns a Request that responds to the `instance.get` SQLAdmin
-// endpoint. It responds with a "StatusOK" and a DatabaseInstance object.
-//
-// https://cloud.google.com/sql/docs/mysql/admin-api/rest/v1beta4/instances/get
-func InstanceGetSuccess(i FakeCSQLInstance, ct int) *Request {
+// IPMapping associates IP addresses with address types (public or private).
+type IPMapping struct {
+	// IPAddr is the IP address of a database instance.
+	IPAddr string
+	// Type is the IP address type (PRIMARY or PRIVATE)
+	Type string
+}
+
+// InstanceGetSuccessWithOpts is like InstanceGetSuccess but allows a caller to
+// configure the SQL Admin API response with specific database instance IP
+// addresses.
+func InstanceGetSuccessWithOpts(i FakeCSQLInstance, ct int, addrs []IPMapping) *Request {
 	// Turn instance keys/certs into PEM encoded versions needed for response
 	certBytes, err := x509.CreateCertificate(
 		rand.Reader, i.Cert, i.Cert, &i.Key.PublicKey, i.Key)
@@ -115,6 +122,14 @@ func InstanceGetSuccess(i FakeCSQLInstance, ct int) *Request {
 		Bytes: certBytes,
 	})
 
+	var ipMap []*sqladmin.IpMapping
+	for _, i := range addrs {
+		ipMap = append(ipMap, &sqladmin.IpMapping{
+			IpAddress: i.IPAddr,
+			Type:      i.Type,
+		})
+	}
+
 	db := &sqladmin.DatabaseInstance{
 		BackendType:     "SECOND_GEN",
 		ConnectionName:  fmt.Sprintf("%s:%s:%s", i.project, i.region, i.name),
@@ -122,13 +137,8 @@ func InstanceGetSuccess(i FakeCSQLInstance, ct int) *Request {
 		Project:         i.project,
 		Region:          i.region,
 		Name:            i.name,
-		IpAddresses: []*sqladmin.IpMapping{
-			{
-				IpAddress: "127.0.0.1",
-				Type:      "PRIMARY",
-			},
-		},
-		ServerCaCert: &sqladmin.SslCert{Cert: certPEM.String()},
+		IpAddresses:     ipMap,
+		ServerCaCert:    &sqladmin.SslCert{Cert: certPEM.String()},
 	}
 
 	r := &Request{
@@ -146,6 +156,17 @@ func InstanceGetSuccess(i FakeCSQLInstance, ct int) *Request {
 		},
 	}
 	return r
+}
+
+// InstanceGetSuccess returns a Request that responds to the `instance.get` SQL Admin
+// endpoint. It responds with a "StatusOK" and a DatabaseInstance object.
+//
+// https://cloud.google.com/sql/docs/mysql/admin-api/rest/v1beta4/instances/get
+//
+// To Configure the response from the SQL Admin endpoint, use
+// InstanceGetSuccessWithOpts.
+func InstanceGetSuccess(i FakeCSQLInstance, ct int) *Request {
+	return InstanceGetSuccessWithOpts(i, ct, []IPMapping{{IPAddr: "127.0.0.1", Type: "PRIMARY"}})
 }
 
 // CreateEphemeralSuccess returns a Request that responds to the

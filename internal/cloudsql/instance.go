@@ -154,16 +154,22 @@ func NewInstance(cn ConnName, client *sqladmin.Service, key *rsa.PrivateKey, ref
 	return i
 }
 
-// ConnectInfo returns a map of IP types and a TLS config that can be used to connect to a Cloud SQL instance.
-func (i *Instance) ConnectInfo(ctx context.Context) (map[string]string, *tls.Config, error) {
+// ConnectInfo returns an IP address specified by ipType (i.e., public or
+// private) and a TLS config that can be used to connect to a Cloud SQL
+// instance.
+func (i *Instance) ConnectInfo(ctx context.Context, ipType string) (string, *tls.Config, error) {
 	i.resultGuard.RLock()
 	res := i.cur
 	i.resultGuard.RUnlock()
 	err := res.Wait(ctx)
 	if err != nil {
-		return nil, nil, err
+		return "", nil, err
 	}
-	return res.md.ipAddrs, res.tlsCfg, nil
+	addr, ok := res.md.ipAddrs[ipType]
+	if !ok {
+		return "", nil, fmt.Errorf("instance '%s' does not have IP of type '%s'", i, ipType)
+	}
+	return addr, res.tlsCfg, nil
 }
 
 // ForceRefresh triggers an immediate refresh operation to be scheduled and used for future connection attempts.

@@ -58,10 +58,10 @@ func TestParseConnName(t *testing.T) {
 	}
 }
 
-func testClient(project, region, instance string) (*sqladmin.Service, func() error, error) {
-	inst := mock.NewFakeCSQLInstance(project, region, instance)
+func testClient(cn cloudsql.ConnName, addrs []mock.IPMapping) (*sqladmin.Service, func() error, error) {
+	inst := mock.NewFakeCSQLInstance(cn.Project, cn.Region, cn.Name)
 	mc, url, cleanup := mock.HTTPClient(
-		mock.InstanceGetSuccess(inst, 1),
+		mock.InstanceGetSuccessWithOpts(inst, 1, addrs),
 		mock.CreateEphemeralSuccess(inst, 1),
 	)
 	client, err := sqladmin.NewService(
@@ -72,49 +72,74 @@ func testClient(project, region, instance string) (*sqladmin.Service, func() err
 	return client, cleanup, err
 }
 
+func rsaKey() *rsa.PrivateKey {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		panic(err) // unexpected, so just panic if it happens
+	}
+	return key
+}
+
 func TestConnectInfo(t *testing.T) {
-	client, cleanup, err := testClient("my-project", "my-region", "my-instance")
+	wantAddr := "0.0.0.0"
+	cn, _ := cloudsql.NewConnName("my-project:my-region:my-instance")
+	client, cleanup, err := testClient(
+		cn,
+		[]mock.IPMapping{{IPAddr: wantAddr, Type: "PRIMARY"}},
+	)
 	if err != nil {
 		t.Fatalf("failed to create test SQL admin service: %s", err)
 	}
 	defer cleanup()
 
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("failed to generate keys: %v", err)
-	}
+	i := cloudsql.NewInstance(cn, client, rsaKey(), 30*time.Second)
 
-	cn, _ := cloudsql.NewConnName("my-project:my-region:my-instance")
-	im := cloudsql.NewInstance(cn, client, key, 30*time.Second)
-
-	_, _, err = im.ConnectInfo(context.Background())
+	gotAddr, gotTLSCfg, err := i.ConnectInfo(context.Background(), cloudsql.PublicIP)
 	if err != nil {
 		t.Fatalf("failed to retrieve connect info: %v", err)
 	}
+
+	if gotAddr != wantAddr {
+		t.Fatalf(
+			"ConnectInfo returned unexpected IP address, want = %v, got = %v",
+			wantAddr, gotAddr,
+		)
+	}
+
+	wantServerName := "my-project:my-region:my-instance"
+	if gotTLSCfg.ServerName != wantServerName {
+		t.Fatalf(
+			"ConnectInfo return unexpected server name in TLS Config, want = %v, got = %v",
+			wantServerName, gotTLSCfg.ServerName,
+		)
+	}
 }
 
-func TestRefreshTimeout(t *testing.T) {
-	client, cleanup, err := testClient("my-project", "my-region", "my-instance")
+func TestConnectInfoErrors(t *testing.T) {
+	cn, _ := cloudsql.NewConnName("my-project:my-region:my-instance")
+	client, cleanup, err := testClient(
+		cn,
+		[]mock.IPMapping{{IPAddr: "127.0.0.1", Type: cloudsql.PublicIP}},
+	)
 	if err != nil {
 		t.Fatalf("failed to create test SQL admin service: %s", err)
 	}
 	defer cleanup()
 
-	// Step 0: Generate Keys
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("failed to generate keys: %v", err)
-	}
-
-	cn, _ := cloudsql.NewConnName("my-project:my-region:my-instance")
 	// Use a timeout that should fail instantly
-	im := cloudsql.NewInstance(cn, client, key, 0)
+	i := cloudsql.NewInstance(cn, client, rsaKey(), 0)
 	if err != nil {
 		t.Fatalf("failed to initialize Instance: %v", err)
 	}
 
-	_, _, err = im.ConnectInfo(context.Background())
+	_, _, err = i.ConnectInfo(context.Background(), cloudsql.PublicIP)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("failed to retrieve connect info: %v", err)
+	}
+
+	// when client asks for wrong IP address type
+	gotAddr, _, err := i.ConnectInfo(context.Background(), cloudsql.PrivateIP)
+	if err == nil {
+		t.Fatalf("expected ConnectInfo to fail but returned IP address = %v", gotAddr)
 	}
 }
