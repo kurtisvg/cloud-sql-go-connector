@@ -33,27 +33,31 @@ const (
 	PrivateIP = "PRIVATE"
 )
 
-// metadata contains information about a Cloud SQL instance needed to create connections.
-type metadata struct {
-	ipAddrs      map[string]string
-	serverCaCert *x509.Certificate
-	version      string
+// Metadata contains information about a Cloud SQL instance needed to create connections.
+type Metadata struct {
+	// IPAddrs is the collection of IP addresses key on instance type (public or
+	// private)
+	IPAddrs map[string]string
+	// ServerCaCert is the certificate for the server-side proxy.
+	ServerCaCert *x509.Certificate
+	// Version is the version of the database instance (e.g., POSTGRES_13)
+	Version string
 }
 
 // fetchMetadata uses the Cloud SQL Admin APIs get method to retreive the information about a Cloud SQL instance
 // that is used to create secure connections.
-func fetchMetadata(ctx context.Context, client *sqladmin.Service, inst ConnName) (metadata, error) {
+func fetchMetadata(ctx context.Context, client *sqladmin.Service, inst ConnName) (Metadata, error) {
 	db, err := client.Instances.Get(inst.Project, inst.Name).Context(ctx).Do()
 	if err != nil {
-		return metadata{}, fmt.Errorf("failed to get instance (%s): %w", inst, err)
+		return Metadata{}, fmt.Errorf("failed to get instance (%s): %w", inst, err)
 	}
 
 	// validate the instance is supported for authenticated connections
 	if db.Region != inst.Region {
-		return metadata{}, fmt.Errorf("provided region was mismatched - got %s, want %s", inst.Region, db.Region)
+		return Metadata{}, fmt.Errorf("provided region was mismatched - got %s, want %s", inst.Region, db.Region)
 	}
 	if db.BackendType != "SECOND_GEN" {
-		return metadata{}, fmt.Errorf("unsupported instance - only Second Generation instances are supported")
+		return Metadata{}, fmt.Errorf("unsupported instance - only Second Generation instances are supported")
 	}
 
 	// parse any ip addresses that might be used to connect
@@ -67,23 +71,23 @@ func fetchMetadata(ctx context.Context, client *sqladmin.Service, inst ConnName)
 		}
 	}
 	if len(ipAddrs) == 0 {
-		return metadata{}, fmt.Errorf("cannot connect to instance - it has no supported IP addresses")
+		return Metadata{}, fmt.Errorf("cannot connect to instance - it has no supported IP addresses")
 	}
 
 	// parse the server-side CA certificate
 	b, _ := pem.Decode([]byte(db.ServerCaCert.Cert))
 	if b == nil {
-		return metadata{}, errors.New("failed to decode valid PEM cert")
+		return Metadata{}, errors.New("failed to decode valid PEM cert")
 	}
 	cert, err := x509.ParseCertificate(b.Bytes)
 	if err != nil {
-		return metadata{}, fmt.Errorf("failed to parse as x509 cert: %s", err)
+		return Metadata{}, fmt.Errorf("failed to parse as x509 cert: %s", err)
 	}
 
-	m := metadata{
-		ipAddrs:      ipAddrs,
-		serverCaCert: cert,
-		version:      db.DatabaseVersion,
+	m := Metadata{
+		IPAddrs:      ipAddrs,
+		ServerCaCert: cert,
+		Version:      db.DatabaseVersion,
 	}
 
 	return m, nil
@@ -125,9 +129,9 @@ func fetchEphemeralCert(ctx context.Context, client *sqladmin.Service, inst Conn
 }
 
 // createTLSConfig returns a *tls.Config for connecting securely to the Cloud SQL instance.
-func createTLSConfig(inst ConnName, m metadata, cert tls.Certificate) *tls.Config {
+func createTLSConfig(inst ConnName, m Metadata, cert tls.Certificate) *tls.Config {
 	certs := x509.NewCertPool()
-	certs.AddCert(m.serverCaCert)
+	certs.AddCert(m.ServerCaCert)
 
 	cfg := &tls.Config{
 		ServerName:   inst.String(),
@@ -173,7 +177,18 @@ func genVerifyPeerCertificateFunc(cn ConnName, pool *x509.CertPool) func(rawCert
 	}
 }
 
-type refresher struct {
+// NewRefresher creates a Refresher.
+func NewRefresher(timeout time.Duration, interval time.Duration, burst int, svc *sqladmin.Service) Refresher {
+	return Refresher{
+		timeout:       timeout,
+		clientLimiter: rate.NewLimiter(rate.Every(interval), burst),
+		client:        svc,
+	}
+}
+
+// Refresher manages the SQL Admin API access to instance metadata and to
+// ephemeral certificates.
+type Refresher struct {
 	// timeout is the maximum amount of time a refresh operation should be allowed to take.
 	timeout time.Duration
 
@@ -181,23 +196,23 @@ type refresher struct {
 	client        *sqladmin.Service
 }
 
-// performRefresh immediately performs a full refresh operation using the Cloud SQL Admin API.
-func (r refresher) performRefresh(ctx context.Context, cn ConnName, k *rsa.PrivateKey) (metadata, *tls.Config, time.Time, error) {
+// PerformRefresh immediately performs a full refresh operation using the Cloud SQL Admin API.
+func (r Refresher) PerformRefresh(ctx context.Context, cn ConnName, k *rsa.PrivateKey) (Metadata, *tls.Config, time.Time, error) {
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 	if ctx.Err() == context.Canceled {
-		return metadata{}, nil, time.Time{}, ctx.Err()
+		return Metadata{}, nil, time.Time{}, ctx.Err()
 	}
 
 	// avoid refreshing too often to try not to tax the SQL Admin API quotas
 	err := r.clientLimiter.Wait(ctx)
 	if err != nil {
-		return metadata{}, nil, time.Time{}, fmt.Errorf("refresh was throttled until context expired: %w", err)
+		return Metadata{}, nil, time.Time{}, fmt.Errorf("refresh was throttled until context expired: %w", err)
 	}
 
 	// start async fetching the instance's metadata
 	type mdRes struct {
-		md  metadata
+		md  Metadata
 		err error
 	}
 	mdC := make(chan mdRes, 1)
@@ -220,7 +235,7 @@ func (r refresher) performRefresh(ctx context.Context, cn ConnName, k *rsa.Priva
 	}()
 
 	// wait for the results of each operations
-	var md metadata
+	var md Metadata
 	select {
 	case r := <-mdC:
 		if r.err != nil {

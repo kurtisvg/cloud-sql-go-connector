@@ -23,8 +23,6 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/time/rate"
-
 	sqladmin "google.golang.org/api/sqladmin/v1beta4"
 )
 
@@ -74,7 +72,7 @@ func NewConnName(cn string) (ConnName, error) {
 // refreshResult is a pending result of a refresh operation of data used to connect securely. It should
 // only be initialized by the Instance struct as part of a refresh cycle.
 type refreshResult struct {
-	md     metadata
+	md     Metadata
 	tlsCfg *tls.Config
 	expiry time.Time
 	err    error
@@ -121,7 +119,7 @@ func (r *refreshResult) IsValid() bool {
 type Instance struct {
 	ConnName
 	key *rsa.PrivateKey
-	r   refresher
+	r   Refresher
 
 	resultGuard sync.RWMutex
 	// cur represents the current refreshResult that will be used to create connections. If a valid complete
@@ -139,11 +137,12 @@ func NewInstance(cn ConnName, client *sqladmin.Service, key *rsa.PrivateKey, ref
 	i := &Instance{
 		ConnName: cn,
 		key:      key,
-		r: refresher{
-			timeout:       refreshTimeout,
-			clientLimiter: rate.NewLimiter(rate.Every(30*time.Second), 2),
-			client:        client,
-		},
+		r: NewRefresher(
+			refreshTimeout,
+			30*time.Second,
+			2,
+			client,
+		),
 	}
 	// For the initial refresh operation, set cur = next so that connection requests block
 	// until the first refresh is complete.
@@ -165,7 +164,7 @@ func (i *Instance) ConnectInfo(ctx context.Context, ipType string) (string, *tls
 	if err != nil {
 		return "", nil, err
 	}
-	addr, ok := res.md.ipAddrs[ipType]
+	addr, ok := res.md.IPAddrs[ipType]
 	if !ok {
 		return "", nil, fmt.Errorf("instance '%s' does not have IP of type '%s'", i, ipType)
 	}
@@ -191,7 +190,7 @@ func (i *Instance) scheduleRefresh(d time.Duration) *refreshResult {
 	res.ready = make(chan struct{})
 	res.timer = time.AfterFunc(d, func() {
 		ctx := context.Background() // TODO: store this in Instance
-		res.md, res.tlsCfg, res.expiry, res.err = i.r.performRefresh(ctx, i.ConnName, i.key)
+		res.md, res.tlsCfg, res.expiry, res.err = i.r.PerformRefresh(ctx, i.ConnName, i.key)
 		close(res.ready)
 
 		// Once the refresh is complete, update "current" with working result and schedule a new refresh
