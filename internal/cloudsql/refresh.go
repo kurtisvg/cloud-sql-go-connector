@@ -197,6 +197,8 @@ type Refresher struct {
 }
 
 // PerformRefresh immediately performs a full refresh operation using the Cloud SQL Admin API.
+// TODO(enocom): This function should return two values, a refreshed thing and
+// an error, where the tls.Config and expiry are folded into the metadata.
 func (r Refresher) PerformRefresh(ctx context.Context, cn ConnName, k *rsa.PrivateKey) (Metadata, *tls.Config, time.Time, error) {
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()

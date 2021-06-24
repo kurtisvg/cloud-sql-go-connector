@@ -19,7 +19,6 @@ import (
 	"errors"
 	"io/ioutil"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -84,13 +83,6 @@ func TestDialerInstantiationErrors(t *testing.T) {
 	}
 }
 
-func errorContains(err error, want string) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), want)
-}
-
 func TestDialWithAdminAPIErrors(t *testing.T) {
 	inst := mock.NewFakeCSQLInstance("my-project", "my-region", "my-instance")
 	mc, url, cleanup := mock.HTTPClient()
@@ -110,7 +102,7 @@ func TestDialWithAdminAPIErrors(t *testing.T) {
 
 	// instance name is bad
 	_, err = d.Dial(context.Background(), "bad-instance-name")
-	if !errorContains(err, "invalid instance") {
+	if !mock.ErrorContains(err, "invalid instance") {
 		t.Fatalf("expected Dial to fail with bad instance name, but it succeeded.")
 	}
 
@@ -125,7 +117,7 @@ func TestDialWithAdminAPIErrors(t *testing.T) {
 
 	// failed to retrieve metadata or ephemeral cert (not registered in the mock)
 	_, err = d.Dial(context.Background(), "my-project:my-region:my-instance")
-	if !errorContains(err, "fetch metadata failed") {
+	if !mock.ErrorContains(err, "fetch metadata failed") {
 		t.Fatalf("expected Dial to fail with missing metadata")
 	}
 }
@@ -149,13 +141,13 @@ func TestDialWithConfigurationErrors(t *testing.T) {
 
 	// when failing to find private IP for public-only instance
 	_, err = d.Dial(context.Background(), "my-project:my-region:my-instance", WithPrivateIP())
-	if !errorContains(err, "does not have IP of type") {
+	if !mock.ErrorContains(err, "does not have IP of type") {
 		t.Fatalf("expected Dial to fail with missing metadata")
 	}
 
 	// when Dialing TCP socket fails (no server proxy running)
 	_, err = d.Dial(context.Background(), "my-project:my-region:my-instance")
-	if !errorContains(err, "connection refused") {
+	if !mock.ErrorContains(err, "connection refused") {
 		t.Fatalf("expected Dial to fail with connection error")
 	}
 
@@ -165,7 +157,7 @@ func TestDialWithConfigurationErrors(t *testing.T) {
 
 	// when TLS handshake fails
 	_, err = d.Dial(context.Background(), "my-project:my-region:my-instance")
-	if !errorContains(err, "handshake failed") {
+	if !mock.ErrorContains(err, "handshake failed") {
 		t.Fatalf("expected Dial to fail with connection error")
 	}
 }

@@ -22,6 +22,7 @@ import (
 
 	"cloud.google.com/cloudsqlconn/internal/cloudsql"
 	"cloud.google.com/cloudsqlconn/internal/mock"
+	sqladmin "google.golang.org/api/sqladmin/v1beta4"
 )
 
 func TestParseConnName(t *testing.T) {
@@ -59,7 +60,7 @@ func TestConnectInfo(t *testing.T) {
 	cn, _ := cloudsql.NewConnName("my-project:my-region:my-instance")
 	client, cleanup, err := mock.TestClient(
 		cn,
-		[]mock.IPMapping{{IPAddr: wantAddr, Type: "PRIMARY"}},
+		&sqladmin.DatabaseInstance{IpAddresses: []*sqladmin.IpMapping{{IpAddress: wantAddr, Type: "PRIMARY"}}},
 		time.Now().Add(time.Hour),
 	)
 	if err != nil {
@@ -67,7 +68,7 @@ func TestConnectInfo(t *testing.T) {
 	}
 	defer cleanup()
 
-	i := cloudsql.NewInstance(cn, client, mock.RSAKey(), 30*time.Second)
+	i := cloudsql.NewInstance(cn, client, mock.RSAKey, 30*time.Second)
 
 	gotAddr, gotTLSCfg, err := i.ConnectInfo(context.Background(), cloudsql.PublicIP)
 	if err != nil {
@@ -94,7 +95,7 @@ func TestConnectInfoErrors(t *testing.T) {
 	cn, _ := cloudsql.NewConnName("my-project:my-region:my-instance")
 	client, cleanup, err := mock.TestClient(
 		cn,
-		[]mock.IPMapping{{IPAddr: "127.0.0.1", Type: cloudsql.PublicIP}},
+		&sqladmin.DatabaseInstance{IpAddresses: []*sqladmin.IpMapping{{IpAddress: "127.0.0.1", Type: "PUBLIC"}}},
 		time.Now().Add(time.Hour),
 	)
 	if err != nil {
@@ -103,7 +104,7 @@ func TestConnectInfoErrors(t *testing.T) {
 	defer cleanup()
 
 	// Use a timeout that should fail instantly
-	i := cloudsql.NewInstance(cn, client, mock.RSAKey(), 0)
+	i := cloudsql.NewInstance(cn, client, mock.RSAKey, 0)
 	if err != nil {
 		t.Fatalf("failed to initialize Instance: %v", err)
 	}

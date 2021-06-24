@@ -6,7 +6,6 @@
 
 //     https://www.apache.org/licenses/LICENSE-2.0
 
-// Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
@@ -28,6 +27,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"time"
 
@@ -102,47 +102,45 @@ func (r *Request) matches(hR *http.Request) bool {
 	return true
 }
 
-// IPMapping associates IP addresses with address types (public or private).
-type IPMapping struct {
-	// IPAddr is the IP address of a database instance.
-	IPAddr string
-	// Type is the IP address type (PRIMARY or PRIVATE)
-	Type string
-}
-
-// InstanceGetSuccessWithOpts is like InstanceGetSuccess but allows a caller to
-// configure the SQL Admin API response with specific database instance IP
-// addresses.
-func InstanceGetSuccessWithOpts(i FakeCSQLInstance, ct int, addrs []IPMapping) *Request {
-	// Turn instance keys/certs into PEM encoded versions needed for response
-	certBytes, err := x509.CreateCertificate(
-		rand.Reader, i.Cert, i.Cert, &i.Key.PublicKey, i.Key)
-	if err != nil {
-		panic(err)
+// InstanceGetSuccessWithDatabase is like InstanceGetSuccess, but allows a
+// caller to configured the returned Database instance data.
+func InstanceGetSuccessWithDatabase(i FakeCSQLInstance, ct int, db *sqladmin.DatabaseInstance) *Request {
+	if db.BackendType == "" {
+		db.BackendType = "SECOND_GEN"
 	}
-	certPEM := new(bytes.Buffer)
-	pem.Encode(certPEM, &pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: certBytes,
-	})
-
-	var ipMap []*sqladmin.IpMapping
-	for _, i := range addrs {
-		ipMap = append(ipMap, &sqladmin.IpMapping{
-			IpAddress: i.IPAddr,
-			Type:      i.Type,
+	if db.ConnectionName == "" {
+		db.ConnectionName = fmt.Sprintf("%s:%s:%s", i.project, i.region, i.name)
+	}
+	if db.DatabaseVersion == "" {
+		db.DatabaseVersion = i.dbVersion
+	}
+	if db.Project == "" {
+		db.Project = i.project
+	}
+	if db.Region == "" {
+		db.Region = i.region
+	}
+	if db.Name == "" {
+		db.Name = i.name
+	}
+	if db.IpAddresses == nil {
+		db.IpAddresses = []*sqladmin.IpMapping{
+			{IpAddress: "127.0.0.1", Type: "PRIMARY"},
+		}
+	}
+	if db.ServerCaCert == nil {
+		// Turn instance keys/certs into PEM encoded versions needed for response
+		certBytes, err := x509.CreateCertificate(
+			rand.Reader, i.Cert, i.Cert, &i.Key.PublicKey, i.Key)
+		if err != nil {
+			panic(err)
+		}
+		certPEM := &bytes.Buffer{}
+		pem.Encode(certPEM, &pem.Block{
+			Type:  "CERTIFICATE",
+			Bytes: certBytes,
 		})
-	}
-
-	db := &sqladmin.DatabaseInstance{
-		BackendType:     "SECOND_GEN",
-		ConnectionName:  fmt.Sprintf("%s:%s:%s", i.project, i.region, i.name),
-		DatabaseVersion: i.dbVersion,
-		Project:         i.project,
-		Region:          i.region,
-		Name:            i.name,
-		IpAddresses:     ipMap,
-		ServerCaCert:    &sqladmin.SslCert{Cert: certPEM.String()},
+		db.ServerCaCert = &sqladmin.SslCert{Cert: certPEM.String()}
 	}
 
 	r := &Request{
@@ -170,12 +168,12 @@ func InstanceGetSuccessWithOpts(i FakeCSQLInstance, ct int, addrs []IPMapping) *
 // To Configure the response from the SQL Admin endpoint, use
 // InstanceGetSuccessWithOpts.
 func InstanceGetSuccess(i FakeCSQLInstance, ct int) *Request {
-	return InstanceGetSuccessWithOpts(i, ct, []IPMapping{{IPAddr: "127.0.0.1", Type: "PRIMARY"}})
+	return InstanceGetSuccessWithDatabase(i, ct, &sqladmin.DatabaseInstance{})
 }
 
-// CreateEphemeralSuccessWithOpts is like CreateEphemeralSuccess but allows a
+// CreateEphemeralSuccessWithExpiry is like CreateEphemeralSuccess but allows a
 // client to configure the certificate expiration time.
-func CreateEphemeralSuccessWithOpts(i FakeCSQLInstance, ct int, certExpiry time.Time) *Request {
+func CreateEphemeralSuccessWithExpiry(i FakeCSQLInstance, ct int, certExpiry time.Time) *Request {
 	r := &Request{
 		reqMethod: http.MethodPost,
 		reqPath:   fmt.Sprintf("/sql/v1beta4/projects/%s/instances/%s/createEphemeral", i.project, i.name),
@@ -258,16 +256,16 @@ func CreateEphemeralSuccessWithOpts(i FakeCSQLInstance, ct int, certExpiry time.
 //
 // https://cloud.google.com/sql/docs/mysql/admin-api/rest/v1beta4/sslCerts/createEphemeral
 func CreateEphemeralSuccess(i FakeCSQLInstance, ct int) *Request {
-	return CreateEphemeralSuccessWithOpts(i, ct, time.Now().Add(time.Hour))
+	return CreateEphemeralSuccessWithExpiry(i, ct, time.Now().Add(time.Hour))
 }
 
 // TestClient is a convenience wrapper that configures a mock HTTP client and
 // sqladmin.Service based on a connection name.
-func TestClient(cn cloudsql.ConnName, addrs []IPMapping, certExpiry time.Time) (*sqladmin.Service, func() error, error) {
+func TestClient(cn cloudsql.ConnName, db *sqladmin.DatabaseInstance, certExpiry time.Time) (*sqladmin.Service, func() error, error) {
 	inst := NewFakeCSQLInstance(cn.Project, cn.Region, cn.Name)
 	mc, url, cleanup := HTTPClient(
-		InstanceGetSuccessWithOpts(inst, 1, addrs),
-		CreateEphemeralSuccessWithOpts(inst, 1, certExpiry),
+		InstanceGetSuccessWithDatabase(inst, 1, db),
+		CreateEphemeralSuccessWithExpiry(inst, 1, certExpiry),
 	)
 	client, err := sqladmin.NewService(
 		context.Background(),
@@ -277,11 +275,19 @@ func TestClient(cn cloudsql.ConnName, addrs []IPMapping, certExpiry time.Time) (
 	return client, cleanup, err
 }
 
-// RSAKey generates an RSA key used for test.
-func RSAKey() *rsa.PrivateKey {
+// genRSAKey generates an RSA key used for test.
+func genRSAKey() *rsa.PrivateKey {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		panic(err) // unexpected, so just panic if it happens
 	}
 	return key
+}
+
+// RSAKey is used for test only.
+var RSAKey = genRSAKey()
+
+// ErrorContains tests that the provided error contains the substring want.
+func ErrorContains(err error, want string) bool {
+	return strings.Contains(err.Error(), want)
 }
