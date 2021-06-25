@@ -235,3 +235,96 @@ func TestRefreshWithFailedEphemeralCertCall(t *testing.T) {
 	}
 }
 
+func TestRefreshBuildsTLSConfig(t *testing.T) {
+	wantServerName := "my-project:my-region:my-instance"
+	cn, _ := cloudsql.NewConnName(wantServerName)
+	inst := mock.NewFakeCSQLInstance(cn.Project, cn.Region, cn.Name)
+	certBytes := mock.CreateCertificate(inst)
+	mc, url, cleanup := mock.HTTPClient(
+		mock.InstanceGetSuccessWithDatabase(inst, 1,
+			&sqladmin.DatabaseInstance{
+				IpAddresses: []*sqladmin.IpMapping{
+					{IpAddress: "127.0.0.1", Type: "PRIMARY"},
+					{IpAddress: "0.0.0.0", Type: "PRIVATE"},
+				},
+				ServerCaCert: &sqladmin.SslCert{
+					Cert: string(certBytes),
+				},
+			},
+		),
+		mock.CreateEphemeralSuccessWithExpiry(inst, 1, time.Now().Add(time.Hour)),
+	)
+	defer cleanup()
+	client, err := sqladmin.NewService(
+		context.Background(),
+		option.WithHTTPClient(mc),
+		option.WithEndpoint(url),
+	)
+	if err != nil {
+		t.Fatalf("failed to create test SQL admin service: %s", err)
+	}
+
+	r := cloudsql.NewRefresher(time.Hour, 30*time.Second, 1, client)
+	_, tlsCfg, _, err := r.PerformRefresh(context.Background(), cn, mock.RSAKey)
+	if err != nil {
+		t.Fatalf("expected no error, got = %v", err)
+	}
+
+	if wantServerName != tlsCfg.ServerName {
+		t.Fatalf(
+			"TLS config has incorrect server name, want = %v, got = %v",
+			wantServerName, tlsCfg.ServerName,
+		)
+	}
+
+	wantCertLen := 1
+	if wantCertLen != len(tlsCfg.Certificates) {
+		t.Fatalf(
+			"TLS config has unexpected number of certificates, want = %v, got = %v",
+			wantCertLen, len(tlsCfg.Certificates),
+		)
+	}
+
+	wantInsecure := true
+	if wantInsecure != tlsCfg.InsecureSkipVerify {
+		t.Fatalf(
+			"TLS config should skip verification, want = %v, got = %v",
+			wantInsecure, tlsCfg.InsecureSkipVerify,
+		)
+	}
+
+	if tlsCfg.RootCAs == nil {
+		t.Fatal("TLS config should include RootCA, got nil")
+	}
+
+	verifyPeerCert := tlsCfg.VerifyPeerCertificate
+	b, _ := pem.Decode(certBytes)
+	err = verifyPeerCert([][]byte{b.Bytes}, nil)
+	if err != nil {
+		t.Fatalf("expected to verify peer cert, got error: %v", err)
+	}
+
+	err = verifyPeerCert(nil, nil)
+	if !mock.ErrorContains(err, "no certificate") {
+		t.Fatalf("expected verify peer cert to fail, got = %v", err)
+	}
+
+	err = verifyPeerCert([][]byte{[]byte("not a cert")}, nil)
+	if !mock.ErrorContains(err, "x509.ParseCertificate(rawCerts[0])") {
+		t.Fatalf("expected verify peer cert to fail on invalid cert, got = %v", err)
+	}
+
+	badCert := mock.GenerateCertWithCommonName(inst, "wrong:wrong")
+	err = verifyPeerCert([][]byte{badCert}, nil)
+	if !mock.ErrorContains(err, "certificate had CN") {
+		t.Fatalf("expected common name mistmatch to error, got = %v", err)
+	}
+
+	other := mock.NewFakeCSQLInstance(cn.Project, cn.Region, cn.Name)
+	certBytes = mock.CreateCertificate(other)
+	b, _ = pem.Decode(certBytes)
+	err = verifyPeerCert([][]byte{b.Bytes}, nil)
+	if !mock.ErrorContains(err, "signed by unknown authority") {
+		t.Fatalf("expected certificate verification to fail, got = %v", err)
+	}
+}

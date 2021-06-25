@@ -59,6 +59,28 @@ func NewFakeCSQLInstance(project, region, name string) FakeCSQLInstance {
 	}
 }
 
+// GenerateCertWithCommonName produces a certificate signed by the Fake Cloud
+// SQL instance's CA with the specified common name cn.
+func GenerateCertWithCommonName(i FakeCSQLInstance, cn string) []byte {
+	cert := &x509.Certificate{
+		SerialNumber: &big.Int{},
+		Subject: pkix.Name{
+			CommonName: cn,
+		},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().AddDate(0, 0, 1),
+		IsCA:                  true,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+	}
+	badCert, err := x509.CreateCertificate(rand.Reader, cert, i.Cert, &i.Key.PublicKey, i.Key)
+	if err != nil {
+		panic(err)
+	}
+	return badCert
+}
+
 // generateCerts generates a private key, an X.509 certificate, and a TLS
 // certificate for a particular fake Cloud SQL database instance.
 func generateCerts(project, name string) (*rsa.PrivateKey, *x509.Certificate, error) {

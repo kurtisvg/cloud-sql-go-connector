@@ -145,16 +145,16 @@ func createTLSConfig(inst ConnName, m Metadata, cert tls.Certificate) *tls.Confi
 		// certificates, we instead need to implement our own VerifyPeerCertificate function
 		// that will verify that the certificate is OK.
 		InsecureSkipVerify:    true,
-		VerifyPeerCertificate: genVerifyPeerCertificateFunc(inst, certs),
+		VerifyPeerCertificate: verifyPeerCertFunc(inst, certs),
 	}
 	return cfg
 }
 
-// genVerifyPeerCertificateFunc creates a VerifyPeerCertificate func that verifies that the peer
-// certificate is in the cert pool. We need to define our own because of our sketchy non-standard
-// CNs.
-func genVerifyPeerCertificateFunc(cn ConnName, pool *x509.CertPool) func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
-	return func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+// verifyPeerCertFunc creates a VerifyPeerCertificate func that verifies that the peer
+// certificate is in the cert pool. We need to define our own because CloudSQL
+// instances use self-signed certificates as a RootCA.
+func verifyPeerCertFunc(cn ConnName, pool *x509.CertPool) func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+	return func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 		if len(rawCerts) == 0 {
 			return fmt.Errorf("no certificate to verify")
 		}

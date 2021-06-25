@@ -102,6 +102,23 @@ func (r *Request) matches(hR *http.Request) bool {
 	return true
 }
 
+// CreateCertificate creates a PEM-encoded X.509 certificate based on the Fake
+// Cloud SQL instance's certificate.
+func CreateCertificate(i FakeCSQLInstance) []byte {
+	// Turn instance keys/certs into PEM encoded versions needed for response
+	certBytes, err := x509.CreateCertificate(
+		rand.Reader, i.Cert, i.Cert, &i.Key.PublicKey, i.Key)
+	if err != nil {
+		panic(err)
+	}
+	certPEM := &bytes.Buffer{}
+	pem.Encode(certPEM, &pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: certBytes,
+	})
+	return certPEM.Bytes()
+}
+
 // InstanceGetSuccessWithDatabase is like InstanceGetSuccess, but allows a
 // caller to configured the returned Database instance data.
 func InstanceGetSuccessWithDatabase(i FakeCSQLInstance, ct int, db *sqladmin.DatabaseInstance) *Request {
@@ -129,18 +146,8 @@ func InstanceGetSuccessWithDatabase(i FakeCSQLInstance, ct int, db *sqladmin.Dat
 		}
 	}
 	if db.ServerCaCert == nil {
-		// Turn instance keys/certs into PEM encoded versions needed for response
-		certBytes, err := x509.CreateCertificate(
-			rand.Reader, i.Cert, i.Cert, &i.Key.PublicKey, i.Key)
-		if err != nil {
-			panic(err)
-		}
-		certPEM := &bytes.Buffer{}
-		pem.Encode(certPEM, &pem.Block{
-			Type:  "CERTIFICATE",
-			Bytes: certBytes,
-		})
-		db.ServerCaCert = &sqladmin.SslCert{Cert: certPEM.String()}
+		certPEM := CreateCertificate(i)
+		db.ServerCaCert = &sqladmin.SslCert{Cert: string(certPEM)}
 	}
 
 	r := &Request{
