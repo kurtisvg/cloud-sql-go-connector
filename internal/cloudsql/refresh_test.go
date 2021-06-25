@@ -104,6 +104,7 @@ func TestRefreshFailsFast(t *testing.T) {
 		t.Fatalf("expected throttled error, got = %v", err)
 	}
 }
+
 func invalidCertPEM() string {
 	certPEM := &bytes.Buffer{}
 	pem.Encode(certPEM, &pem.Block{
@@ -123,7 +124,7 @@ func TestRefreshWithFailedMetadataCall(t *testing.T) {
 		desc    string
 	}{
 		{
-			req:     mock.CreateEphemeralSuccess(inst, 1), // not a metadata request
+			req:     mock.CreateEphemeralSuccess(inst, 1), // not a metadata call
 			wantErr: "failed to get instance",
 			desc:    "When the Metadata call fails",
 		},
@@ -178,7 +179,7 @@ func TestRefreshWithFailedMetadataCall(t *testing.T) {
 		},
 	}
 	for i, tc := range testCases {
-		mc, url, cleanup := mock.HTTPClient(tc.req)
+		mc, url, cleanup := mock.HTTPClient(mock.CreateEphemeralSuccess(inst, 1), tc.req)
 		client, err := sqladmin.NewService(
 			context.Background(),
 			option.WithHTTPClient(mc),
@@ -193,7 +194,43 @@ func TestRefreshWithFailedMetadataCall(t *testing.T) {
 		_, _, _, err = r.PerformRefresh(context.Background(), cn, mock.RSAKey)
 
 		if !mock.ErrorContains(err, tc.wantErr) {
-			t.Errorf("[%v] PerformRefresh failed with unexpected error: %v", i, err)
+			t.Errorf("[%v] PerformRefresh failed with unexpected error, want = %v, got = %v", i, tc.wantErr, err)
+		}
+	}
+}
+
+func TestRefreshWithFailedEphemeralCertCall(t *testing.T) {
+	cn, _ := cloudsql.NewConnName("my-project:my-region:my-instance")
+	inst := mock.NewFakeCSQLInstance(cn.Project, cn.Region, cn.Name)
+
+	testCases := []struct {
+		req     *mock.Request
+		wantErr string
+		desc    string
+	}{
+		{
+			req:     mock.InstanceGetSuccess(inst, 1), // not an ephemeral cert call
+			wantErr: "create failed",
+			desc:    "When the CreateEphemeralCert call fails",
+		},
+	}
+	for i, tc := range testCases {
+		mc, url, cleanup := mock.HTTPClient(mock.InstanceGetSuccess(inst, 1), tc.req)
+		client, err := sqladmin.NewService(
+			context.Background(),
+			option.WithHTTPClient(mc),
+			option.WithEndpoint(url),
+		)
+		if err != nil {
+			t.Fatalf("failed to create test SQL admin service: %s", err)
+		}
+		defer cleanup()
+
+		r := cloudsql.NewRefresher(time.Hour, 30*time.Second, 1, client)
+		_, _, _, err = r.PerformRefresh(context.Background(), cn, mock.RSAKey)
+
+		if !mock.ErrorContains(err, tc.wantErr) {
+			t.Errorf("[%v] PerformRefresh failed with unexpected error, want = %v, got = %v", i, tc.wantErr, err)
 		}
 	}
 }

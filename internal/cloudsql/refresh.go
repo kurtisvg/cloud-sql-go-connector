@@ -107,7 +107,7 @@ func fetchEphemeralCert(ctx context.Context, client *sqladmin.Service, inst Conn
 	}
 	resp, err := client.SslCerts.CreateEphemeral(inst.Project, inst.Name, &req).Context(ctx).Do()
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("create ephemeral failed: %w", err)
+		return tls.Certificate{}, fmt.Errorf("create failed: %w", err)
 	}
 
 	// parse the client cert
